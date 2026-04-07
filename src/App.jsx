@@ -169,15 +169,32 @@ function UtilitiesSection({ utilities, production, acetoneTanks }) {
     return m;
   }, [production]);
 
-  const joined = useMemo(() => utilities.map(u => {
-    const mt = prodMap[u.day] || 0;
-    return {
-      day: u.day,
-      diesel:      mt > 0 ? +((u.diesel_L||0)/mt).toFixed(1) : null,
-      electricity: mt > 0 ? +((u.electricity_kwh||0)/mt).toFixed(1) : null,
-      water:       mt > 0 ? +((u.water_m3||0)/mt).toFixed(1) : null,
-    };
-  }).filter(d=>d.diesel!==null || d.electricity!==null), [utilities, prodMap]);
+  // Build an acetone consumed map keyed by day
+  const acetoneConsumedMap = useMemo(() => {
+    const m = {};
+    acetoneTanks.forEach(d => { if (d.acetone_consumed_kg != null) m[d.day] = d.acetone_consumed_kg; });
+    return m;
+  }, [acetoneTanks]);
+
+  const joined = useMemo(() => {
+    // Union of utility days and acetone days
+    const daySet = new Set([
+      ...utilities.map(u => u.day),
+      ...Object.keys(acetoneConsumedMap),
+    ]);
+    return Array.from(daySet).sort().map(day => {
+      const u  = utilities.find(x => x.day === day) || {};
+      const mt = prodMap[day] || 0;
+      const ac = acetoneConsumedMap[day] ?? null;
+      return {
+        day,
+        diesel:      mt > 0 && u.diesel_L       != null ? +((u.diesel_L      )/mt).toFixed(1) : null,
+        electricity: mt > 0 && u.electricity_kwh != null ? +((u.electricity_kwh)/mt).toFixed(1) : null,
+        water:       mt > 0 && u.water_m3        != null ? +((u.water_m3      )/mt).toFixed(1) : null,
+        acetone:     mt > 0 && ac               != null ? +(ac/mt).toFixed(1) : null,
+      };
+    }).filter(d => d.diesel!==null || d.electricity!==null || d.acetone!==null);
+  }, [utilities, prodMap, acetoneConsumedMap]);
 
   const hl = lastWorkDay(joined.map(d=>d.day));
   const hlRow = joined.find(d=>d.day===hl);
@@ -205,32 +222,34 @@ function UtilitiesSection({ utilities, production, acetoneTanks }) {
   }
 
   const acetoneLast = acetoneTanks.slice(-1)[0];
-  const acetoneAvg = +avg(acetoneTanks.slice(-30).map(d=>d.total_acetone_kg||0)).toFixed(0);
+  const acetoneStockAvg = +avg(acetoneTanks.slice(-30).map(d=>d.total_acetone_kg||0)).toFixed(0);
   return (
     <Card title="Utilities per MT Produced" subtitle="last working day + 30d avg" accent={S.purple}>
+      {/* 4 per-MT metrics in 2×2 grid */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10 }}>
-        <SubChart label="Diesel" dataKey="diesel" unit="L/MT" color={S.orange} />
-        <SubChart label="Electricity" dataKey="electricity" unit="kWh/MT" color={S.yellow} />
-        <SubChart label="Water" dataKey="water" unit="m³/MT" color={S.blue} />
-        {/* Acetone Available */}
-        <div style={{ background:"#04080f", borderRadius:8, padding:"10px 12px" }}>
-          <div style={{ fontFamily:mono, fontSize:9, color:S.muted, marginBottom:4,
-            letterSpacing:"0.1em", textTransform:"uppercase" }}>Total Acetone</div>
-          <div style={{ fontFamily:mono, fontSize:20, fontWeight:700, color:S.green }}>
-            {hlAcetone?.total_acetone_kg != null
-              ? `${Math.round(hlAcetone.total_acetone_kg).toLocaleString()}`
-              : acetoneLast?.total_acetone_kg != null
-              ? `${Math.round(acetoneLast.total_acetone_kg).toLocaleString()}`
-              : "—"}
-            <span style={{ fontSize:11, color:S.muted, marginLeft:4 }}>kg</span>
-          </div>
-          <div style={{ fontFamily:mono, fontSize:9, color:S.muted, marginBottom:6 }}>
-            30d avg: {acetoneAvg.toLocaleString()} kg · RAT+RMT6+0.88×RMT7+0.95×IMT7
-          </div>
-          <Sparkline
-            data={acetoneTanks.slice(-30).map(d=>({ day:d.day, value:d.total_acetone_kg||0 }))}
-            color={S.green} height={32} />
+        <SubChart label="Diesel"       dataKey="diesel"      unit="L/MT"   color={S.orange} />
+        <SubChart label="Electricity"  dataKey="electricity" unit="kWh/MT" color={S.yellow} />
+        <SubChart label="Water"        dataKey="water"       unit="m³/MT"  color={S.blue}   />
+        <SubChart label="Acetone"      dataKey="acetone"     unit="kg/MT"  color={S.green}  />
+      </div>
+      {/* Acetone stock level — full-width below */}
+      <div style={{ background:"#04080f", borderRadius:8, padding:"10px 12px" }}>
+        <div style={{ fontFamily:mono, fontSize:9, color:S.muted, marginBottom:4,
+          letterSpacing:"0.1em", textTransform:"uppercase" }}>Total Acetone Stock</div>
+        <div style={{ fontFamily:mono, fontSize:20, fontWeight:700, color:S.green }}>
+          {hlAcetone?.total_acetone_kg != null
+            ? `${Math.round(hlAcetone.total_acetone_kg).toLocaleString()}`
+            : acetoneLast?.total_acetone_kg != null
+            ? `${Math.round(acetoneLast.total_acetone_kg).toLocaleString()}`
+            : "—"}
+          <span style={{ fontSize:11, color:S.muted, marginLeft:4 }}>kg available</span>
         </div>
+        <div style={{ fontFamily:mono, fontSize:9, color:S.muted, marginBottom:6 }}>
+          30d avg: {acetoneStockAvg.toLocaleString()} kg · RAT+RMT6+0.88×RMT7+0.95×IMT7
+        </div>
+        <Sparkline
+          data={acetoneTanks.slice(-30).map(d=>({ day:d.day, value:d.total_acetone_kg||0 }))}
+          color={S.green} height={28} />
       </div>
     </Card>
   );
