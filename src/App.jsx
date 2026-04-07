@@ -165,7 +165,7 @@ function ProductionSection({ production }) {
 function UtilitiesSection({ utilities, production, acetoneTanks }) {
   const prodMap = useMemo(() => {
     const m = {};
-    production.forEach(d => { m[d.day] = (d.slurry_kg||0)/1000; }); // MT
+    production.forEach(d => { m[d.day] = (d.csl_kg||0)/1000; }); // MT crude processed
     return m;
   }, [production]);
 
@@ -604,6 +604,141 @@ function SalesSection({ sales }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SECTION 8: Batch Viewer
+// ─────────────────────────────────────────────────────────────────────────────
+function BatchViewerSection() {
+  const [batchList, setBatchList] = useState([]);
+  const [selected, setSelected]   = useState("");
+  const [details, setDetails]     = useState(null);
+  const [loading, setLoading]     = useState(false);
+  const [listError, setListError] = useState(null);
+
+  useEffect(() => {
+    apiGet("getBatchList")
+      .then(setBatchList)
+      .catch(e => setListError(e.message));
+  }, []);
+
+  useEffect(() => {
+    if (!selected) { setDetails(null); return; }
+    setLoading(true);
+    apiGet("getBatchDetails", { code: selected })
+      .then(setDetails)
+      .catch(() => setDetails(null))
+      .finally(() => setLoading(false));
+  }, [selected]);
+
+  function fmtTs(ts) {
+    if (!ts) return "—";
+    return new Date(ts).toLocaleString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" });
+  }
+
+  const root = details?.root;
+  const entries = details?.entries || [];
+  const totalBags = entries.reduce((s, e) => s + (e.NumberOfBags||0), 0);
+  const totalCsl  = entries.reduce((s, e) => s + (e.csl_kg||0), 0) / 1000;
+
+  return (
+    <Card title="Batch Viewer" subtitle="select a root batch to inspect" accent={S.blue}>
+      {listError && (
+        <div style={{ fontFamily:mono, fontSize:12, color:S.red, marginBottom:10 }}>
+          ⚠ Could not load batch list: {listError}
+        </div>
+      )}
+
+      <select
+        value={selected}
+        onChange={e => setSelected(e.target.value)}
+        style={{ width:"100%", background:"#04080f", border:`1px solid ${S.border}`,
+          color: selected ? S.text : S.muted, borderRadius:8, padding:"10px 12px",
+          fontFamily:mono, fontSize:13, marginBottom:14, cursor:"pointer" }}>
+        <option value="">— Select batch —</option>
+        {batchList.map(b => (
+          <option key={b.RootBatchCode} value={b.RootBatchCode}>
+            {b.RootBatchCode}
+            {b.first_date ? `  ·  ${fmtDate(b.first_date)}` : "  ·  no production"}
+            {b.total_bags ? `  ·  ${b.total_bags} bags` : ""}
+          </option>
+        ))}
+      </select>
+
+      {loading && (
+        <div style={{ fontFamily:mono, fontSize:12, color:S.muted, textAlign:"center", padding:20 }}>
+          Loading…
+        </div>
+      )}
+
+      {!loading && root && (
+        <>
+          {/* Header summary */}
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:14 }}>
+            <Stat label="Allocated" value={`${root.AllocatedQty_MT ?? "—"} MT`} color={S.blue} />
+            <Stat label="Status" value={root.IsActive ? "Active" : "Closed"}
+              color={root.IsActive ? S.green : S.muted} />
+            <Stat label="Total Bags" value={totalBags || "—"} color={S.orange} />
+            <Stat label="CSL Processed" value={totalCsl > 0 ? `${totalCsl.toFixed(2)} MT` : "—"} color={S.purple} />
+          </div>
+          <div style={{ fontFamily:mono, fontSize:10, color:S.muted, marginBottom:14 }}>
+            Allocated by {root.CreatedByName || "—"} · Created {fmtDate(root.CreatedAt)}
+            {root.Year ? `  ·  Year ${root.Year}  ·  Block ${root.Block}  ·  Receipt ${root.ReceiptNo}  ·  Material ${root.MaterialType}` : ""}
+          </div>
+
+          {/* Production entries table */}
+          {entries.length === 0 ? (
+            <div style={{ fontFamily:mono, fontSize:12, color:S.muted }}>No submitted production entries.</div>
+          ) : (
+            <div style={{ overflowX:"auto" }}>
+              <table style={{ width:"100%", borderCollapse:"collapse", fontFamily:mono, fontSize:11 }}>
+                <thead>
+                  <tr style={{ borderBottom:`1px solid ${S.border}` }}>
+                    {["Date","Batch No.","Decanter","Operator","Start","Stop","Bags","CSL (kg)"].map(h => (
+                      <th key={h} style={{ padding:"6px 8px", color:S.muted, fontWeight:600,
+                        textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((e, i) => (
+                    <tr key={e.EntryID ?? i}
+                      style={{ borderBottom:`1px solid ${S.border}22`,
+                        background: i % 2 === 0 ? "transparent" : "#04080f" }}>
+                      <td style={{ padding:"6px 8px", color:S.text, whiteSpace:"nowrap" }}>
+                        {e.production_date ? fmtDate(e.production_date) : "—"}
+                      </td>
+                      <td style={{ padding:"6px 8px", color:S.orange, whiteSpace:"nowrap" }}>
+                        {e.FullBatchNumber || e.LotNumber || "—"}
+                      </td>
+                      <td style={{ padding:"6px 8px", color:S.blue }}>{e.Decanter || "—"}</td>
+                      <td style={{ padding:"6px 8px", color:S.muted }}>{e.OperatorName || "—"}</td>
+                      <td style={{ padding:"6px 8px", color:S.muted, whiteSpace:"nowrap" }}>
+                        {fmtTs(e.DecanterStartTS)}
+                      </td>
+                      <td style={{ padding:"6px 8px", color:S.muted, whiteSpace:"nowrap" }}>
+                        {fmtTs(e.DecanterStopTS)}
+                      </td>
+                      <td style={{ padding:"6px 8px", color:S.text, textAlign:"right" }}>
+                        {e.NumberOfBags ?? "—"}
+                      </td>
+                      <td style={{ padding:"6px 8px", color:S.green, textAlign:"right" }}>
+                        {e.csl_kg != null ? Math.round(e.csl_kg).toLocaleString() : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+
+      {!loading && selected && !root && (
+        <div style={{ fontFamily:mono, fontSize:12, color:S.muted }}>No data found for this batch.</div>
+      )}
+    </Card>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN APP
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
@@ -735,6 +870,7 @@ export default function App() {
             <SurplusSection production={data.production} packagingOut={data.packagingOut} />
             <CrudeSection crude={data.crude} />
             <SalesSection sales={data.sales} />
+            <BatchViewerSection />
           </>
         )}
       </div>
